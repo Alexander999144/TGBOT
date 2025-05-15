@@ -11,7 +11,7 @@ from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = "7571758285:AAFBPa8GcDTYAuqAfYE9RF_abW5ng00PfsU"
+TOKEN = ""
 bot = telebot.TeleBot(TOKEN)
 
 
