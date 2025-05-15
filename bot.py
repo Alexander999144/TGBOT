@@ -1,0 +1,525 @@
+import telebot
+import os
+import json
+from telebot import types
+import random
+import time
+import logging
+from telebot.types import InputMediaPhoto, InputMediaVideo, InputMediaDocument
+
+
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+TOKEN = "7571758285:AAFBPa8GcDTYAuqAfYE9RF_abW5ng00PfsU"
+bot = telebot.TeleBot(TOKEN)
+
+
+if not os.path.exists('user_data'):
+    os.makedirs('user_data')
+if not os.path.exists('user_files'):
+    os.makedirs('user_files')
+
+
+def load_user_buttons(user_id):
+    file_path = f'user_data/{user_id}_buttons.json'
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8') as file:
+            return json.load(file)
+    else:
+        return {}
+
+
+def save_user_buttons(user_id, buttons):
+    file_path = f'user_data/{user_id}_buttons.json'
+    with open(file_path, 'w', encoding='utf-8') as file:
+        json.dump(buttons, file, ensure_ascii=False)
+
+
+def create_user_keyboard(user_id):
+    buttons = load_user_buttons(user_id)
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    
+
+    markup.add(types.KeyboardButton("➕ Создать кнопку"))
+    markup.add(types.KeyboardButton("❓ Задать вопрос"))
+    
+
+    for button_name in buttons.keys():
+        markup.add(types.KeyboardButton(button_name))
+    
+    return markup
+
+
+def save_file(file_info, file_id, file_type, user_id, button_name):
+    user_dir = f'user_files/{user_id}'
+    if not os.path.exists(user_dir):
+        os.makedirs(user_dir)
+    
+    button_dir = f'{user_dir}/{button_name}'
+    if not os.path.exists(button_dir):
+        os.makedirs(button_dir)
+    
+    if file_type == 'photo':
+        file_path = f'{button_dir}/{file_id}.jpg'
+    elif file_type == 'document':
+        if hasattr(file_info, 'file_name'):
+            file_name = file_info.file_name
+        else:
+            file_name = f'{file_id}.doc'
+        file_path = f'{button_dir}/{file_name}'
+    elif file_type == 'video':
+        file_path = f'{button_dir}/{file_id}.mp4'
+    elif file_type == 'audio':
+        file_path = f'{button_dir}/{file_id}.mp3'
+    else:
+        file_path = f'{button_dir}/{file_id}.file'
+    
+    downloaded_file = bot.download_file(bot.get_file(file_id).file_path)
+    with open(file_path, 'wb') as new_file:
+        new_file.write(downloaded_file)
+    
+    return file_path
+
+def update_button_info(user_id, button_name, file_path, file_type, file_id):
+    buttons = load_user_buttons(user_id)
+    
+    if button_name not in buttons:
+        buttons[button_name] = []
+    
+    file_info = {
+        'path': file_path,
+        'type': file_type,
+        'id': file_id
+    }
+    
+    buttons[button_name].append(file_info)
+    save_user_buttons(user_id, buttons)
+
+def fake_internet_search(query):
+    time.sleep(3)
+    
+    responses = [
+        f"По запросу '{query}' найдена следующая информация: это очень интересная тема в области образования!",
+        f"Результаты поиска для '{query}': согласно последним исследованиям, этот вопрос активно изучается учеными.",
+        f"Информация по теме '{query}': в учебной литературе существует несколько подходов к решению этой задачи.",
+        f"По запросу '{query}' найдено 1,547,000 результатов. Наиболее релевантный: этот предмет является частью стандартной учебной программы.",
+        f"Поиск по '{query}' завершен. Рекомендуется обратиться к учебникам и научным статьям для более детального изучения."
+    ]
+    
+    return random.choice(responses)
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    user_id = message.from_user.id
+    
+    bot.send_message(
+        message.chat.id,
+        "👋 Привет! Я твой бот-помощник по учебе.\n\n"
+        "Что я умею:\n"
+        "- Создавать кнопки для хранения учебных материалов\n"
+        "- Хранить файлы: документы, фото, видео и аудио\n"
+        "- Отвечать на вопросы (имитация поиска в интернете)\n\n"
+        "Используй кнопки ниже для взаимодействия со мной:",
+        reply_markup=create_user_keyboard(user_id)
+    )
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    bot.send_message(
+        message.chat.id,
+        "📚 Справка по использованию бота:\n\n"
+        "➕ Создать кнопку - создание новой кнопки для загрузки файлов\n"
+        "❓ Задать вопрос - имитация поиска информации в интернете\n\n"
+        "Для загрузки файла в кнопку, просто нажмите на нужную кнопку и следуйте инструкциям."
+    )
+
+@bot.message_handler(func=lambda message: message.text == "➕ Создать кнопку")
+def create_button(message):
+    user_id = message.from_user.id
+    
+    msg = bot.send_message(
+        message.chat.id,
+        "Введите название для новой кнопки:",
+        reply_markup=types.ForceReply(selective=True)
+    )
+    
+    bot.register_next_step_handler(msg, process_button_name)
+
+def process_button_name(message):
+    user_id = message.from_user.id
+    button_name = message.text.strip()
+    
+    if len(button_name) < 1 or len(button_name) > 30:
+        bot.send_message(
+            message.chat.id,
+            "❌ Название кнопки должно содержать от 1 до 30 символов. Попробуйте еще раз.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    if button_name in ["➕ Создать кнопку", "❓ Задать вопрос"]:
+        bot.send_message(
+            message.chat.id,
+            "❌ Это название зарезервировано системой. Пожалуйста, выберите другое название.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    buttons = load_user_buttons(user_id)
+    
+    if button_name in buttons:
+        bot.send_message(
+            message.chat.id,
+            "❌ Кнопка с таким названием уже существует. Пожалуйста, выберите другое название.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    buttons[button_name] = []
+    save_user_buttons(user_id, buttons)
+    
+    bot.send_message(
+        message.chat.id,
+        f"✅ Кнопка '{button_name}' успешно создана!",
+        reply_markup=create_user_keyboard(user_id)
+    )
+
+@bot.message_handler(func=lambda message: message.text == "❓ Задать вопрос")
+def ask_question(message):
+    user_id = message.from_user.id
+    
+    msg = bot.send_message(
+        message.chat.id,
+        "Введите ваш вопрос, и я попытаюсь найти ответ:",
+        reply_markup=types.ForceReply(selective=True)
+    )
+    
+    bot.register_next_step_handler(msg, process_question)
+
+def process_question(message):
+    user_id = message.from_user.id
+    question = message.text.strip()
+    
+    if len(question) < 3:
+        bot.send_message(
+            message.chat.id,
+            "❌ Вопрос слишком короткий. Пожалуйста, задайте более развернутый вопрос.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    search_message = bot.send_message(
+        message.chat.id,
+        "🔍 Ищу информацию..."
+    )
+    
+    answer = fake_internet_search(question)
+    
+    bot.edit_message_text(
+        chat_id=message.chat.id,
+        message_id=search_message.message_id,
+        text=f"🔍 Результаты поиска:\n\n{answer}"
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        "Что-нибудь еще?",
+        reply_markup=create_user_keyboard(user_id)
+    )
+
+@bot.message_handler(func=lambda message: message.text not in ["➕ Создать кнопку", "❓ Задать вопрос"])
+def handle_custom_button(message):
+    user_id = message.from_user.id
+    button_name = message.text
+    
+    buttons = load_user_buttons(user_id)
+    
+    if button_name not in buttons:
+        bot.send_message(
+            message.chat.id,
+            "❌ Кнопка не найдена.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    upload_button = types.InlineKeyboardButton("📤 Загрузить файл", callback_data=f"upload_{button_name}")
+    view_button = types.InlineKeyboardButton("👁 Просмотреть файлы", callback_data=f"view_{button_name}")
+    delete_button = types.InlineKeyboardButton("🗑 Удалить кнопку", callback_data=f"delete_{button_name}")
+    
+    markup.add(upload_button, view_button)
+    markup.add(delete_button)
+    
+    bot.send_message(
+        message.chat.id,
+        f"Выбрана кнопка: {button_name}\n\nЧто вы хотите сделать?",
+        reply_markup=markup
+    )
+
+
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    user_id = call.from_user.id
+    callback_data = call.data
+    
+    if callback_data.startswith('upload_'):
+        button_name = callback_data.split('_', 1)[1]
+        msg = bot.send_message(
+            call.message.chat.id,
+            f"Отправьте файл, фото, видео или аудио для загрузки в кнопку '{button_name}':"
+        )
+        bot.register_next_step_handler(msg, lambda m: process_file_upload(m, button_name))
+    
+    elif callback_data.startswith('view_'):
+        button_name = callback_data.split('_', 1)[1]
+        view_files(call.message, button_name)
+    
+    elif callback_data.startswith('delete_'):
+        button_name = callback_data.split('_', 1)[1]
+        
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        yes_button = types.InlineKeyboardButton("Да", callback_data=f"confirm_delete_{button_name}")
+        no_button = types.InlineKeyboardButton("Нет", callback_data=f"cancel_delete")
+        markup.add(yes_button, no_button)
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=f"❓ Вы уверены, что хотите удалить кнопку '{button_name}' и все загруженные в неё файлы?",
+            reply_markup=markup
+        )
+    
+    elif callback_data.startswith('confirm_delete_'):
+        button_name = callback_data.split('_', 2)[2]
+        delete_button(call.message, button_name)
+    
+    elif callback_data == 'cancel_delete':
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text="❌ Удаление кнопки отменено."
+        )
+        
+        bot.send_message(
+            call.message.chat.id,
+            "Что-нибудь еще?",
+            reply_markup=create_user_keyboard(user_id)
+        )
+    
+    elif callback_data.startswith('file_'):
+        parts = callback_data.split('_', 3)
+        button_name = parts[1]
+        file_index = int(parts[2])
+        
+        send_file(call.message, button_name, file_index)
+    
+    bot.answer_callback_query(call.id)
+
+
+def process_file_upload(message, button_name):
+    user_id = message.from_user.id
+    
+    if not (message.content_type in ['photo', 'document', 'video', 'audio']):
+        bot.send_message(
+            message.chat.id,
+            "❌ Отправьте файл, фото, видео или аудио.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    try:
+        file_id = None
+        file_info = None
+        file_type = message.content_type
+        
+        if file_type == 'photo':
+            file_id = message.photo[-1].file_id
+            file_info = message.photo[-1]
+        elif file_type == 'document':
+            file_id = message.document.file_id
+            file_info = message.document
+        elif file_type == 'video':
+            file_id = message.video.file_id
+            file_info = message.video
+        elif file_type == 'audio':
+            file_id = message.audio.file_id
+            file_info = message.audio
+        
+        file_path = save_file(file_info, file_id, file_type, user_id, button_name)
+        
+        update_button_info(user_id, button_name, file_path, file_type, file_id)
+        
+        bot.send_message(
+            message.chat.id,
+            f"✅ Файл успешно загружен в кнопку '{button_name}'!",
+            reply_markup=create_user_keyboard(user_id)
+        )
+    
+    except Exception as e:
+        logger.error(f"Error uploading file: {e}")
+        bot.send_message(
+            message.chat.id,
+            "❌ Произошла ошибка при загрузке файла. Пожалуйста, попробуйте еще раз.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+
+def view_files(message, button_name):
+    user_id = message.chat.id
+    
+    buttons = load_user_buttons(user_id)
+    
+    if button_name not in buttons:
+        bot.send_message(
+            message.chat.id,
+            "❌ Кнопка не найдена.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    files = buttons[button_name]
+    
+    if not files:
+        bot.send_message(
+            message.chat.id,
+            f"📂 В кнопке '{button_name}' нет загруженных файлов.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    
+    for i, file_info in enumerate(files):
+        file_type = file_info['type']
+        
+        if file_type == 'photo':
+            icon = "🖼"
+        elif file_type == 'document':
+            icon = "📄"
+        elif file_type == 'video':
+            icon = "🎬"
+        elif file_type == 'audio':
+            icon = "🎵"
+        else:
+            icon = "📁"
+        
+        file_name = os.path.basename(file_info['path'])
+        
+        button_text = f"{icon} Файл #{i+1}: {file_name}"
+        callback_data = f"file_{button_name}_{i}"
+        
+        if len(button_text) > 50:
+            button_text = button_text[:47] + "..."
+        
+        markup.add(types.InlineKeyboardButton(button_text, callback_data=callback_data))
+    
+    markup.add(types.InlineKeyboardButton("🔙 Назад", callback_data=f"back_to_{button_name}"))
+    
+    bot.send_message(
+        message.chat.id,
+        f"📂 Файлы в кнопке '{button_name}':\n\nВыберите файл для просмотра:",
+        reply_markup=markup
+    )
+
+def send_file(message, button_name, file_index):
+    user_id = message.chat.id
+    
+    buttons = load_user_buttons(user_id)
+    
+    if button_name not in buttons:
+        bot.send_message(
+            message.chat.id,
+            "❌ Кнопка не найдена.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    files = buttons[button_name]
+    
+    if file_index >= len(files):
+        bot.send_message(
+            message.chat.id,
+            "❌ Файл не найден.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    file_info = files[file_index]
+    file_type = file_info['type']
+    file_id = file_info['id']
+    
+    try:
+        if file_type == 'photo':
+            bot.send_photo(message.chat.id, file_id, caption=f"Файл из кнопки '{button_name}'")
+        elif file_type == 'document':
+            bot.send_document(message.chat.id, file_id, caption=f"Файл из кнопки '{button_name}'")
+        elif file_type == 'video':
+            bot.send_video(message.chat.id, file_id, caption=f"Файл из кнопки '{button_name}'")
+        elif file_type == 'audio':
+            bot.send_audio(message.chat.id, file_id, caption=f"Файл из кнопки '{button_name}'")
+        else:
+            bot.send_message(
+                message.chat.id,
+                "❌ Неизвестный тип файла.",
+                reply_markup=create_user_keyboard(user_id)
+            )
+    except Exception as e:
+        logger.error(f"Error sending file: {e}")
+        bot.send_message(
+            message.chat.id,
+            "❌ Произошла ошибка при отправке файла.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+    
+    bot.send_message(
+        message.chat.id,
+        "Что-нибудь еще?",
+        reply_markup=create_user_keyboard(user_id)
+    )
+
+def delete_button(message, button_name):
+    user_id = message.chat.id
+    
+    buttons = load_user_buttons(user_id)
+    
+    if button_name not in buttons:
+        bot.send_message(
+            message.chat.id,
+            "❌ Кнопка не найдена.",
+            reply_markup=create_user_keyboard(user_id)
+        )
+        return
+    
+    button_dir = f'user_files/{user_id}/{button_name}'
+    if os.path.exists(button_dir):
+        try:
+            for file_name in os.listdir(button_dir):
+                file_path = os.path.join(button_dir, file_name)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            
+            os.rmdir(button_dir)
+        except Exception as e:
+            logger.error(f"Error deleting button directory: {e}")
+    
+    del buttons[button_name]
+    save_user_buttons(user_id, buttons)
+    
+    bot.edit_message_text(
+        chat_id=message.chat.id,
+        message_id=message.message_id,
+        text=f"✅ Кнопка '{button_name}' успешно удалена!"
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        "Что-нибудь еще?",
+        reply_markup=create_user_keyboard(user_id)
+    )
+
+def main():
+    logger.info("Starting bot...")
+    bot.polling(none_stop=True, interval=0)
+
+if __name__ == '__main__':
+    main()
